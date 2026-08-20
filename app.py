@@ -1,13 +1,9 @@
 import time
+import os
 
 import chromadb
-import ollama
 import streamlit as st
-
-CHROMA_DIR = "chroma_db"
-COLLECTION_NAME = "policies"
-EMBED_MODEL = "nomic-embed-text"
-CHAT_MODEL = "llama3.2:3b"
+from openai import OpenAI
 
 ROLE_LEVEL = {
     "Associate": 1,
@@ -15,36 +11,104 @@ ROLE_LEVEL = {
     "Executive": 3,
 }
 
+SOURCE_DB = "chroma_db"
+SOURCE_COLLECTION = "policies"
+HOSTED_DB = "hosted_chroma_db"
+HOSTED_COLLECTION = "policies_openai"
+
+EMBED_MODEL = "text-embedding-3-small"
+CHAT_MODEL = "gpt-5-mini"
+
 st.set_page_config(
-    page_title="DunderMifflin Local RAG",
+    page_title="DunderMifflin Policy RAG",
     page_icon="🔐",
     layout="wide",
 )
 
+api_key = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
+
+if not api_key:
+    st.error("OPENAI_API_KEY is not configured.")
+    st.stop()
+
+client = OpenAI(api_key=api_key)
+
 
 @st.cache_resource
-def get_collection():
-    client = chromadb.PersistentClient(path=CHROMA_DIR)
-    return client.get_collection(COLLECTION_NAME)
+def get_hosted_collection():
+    source_client = chromadb.PersistentClient(path=SOURCE_DB)
+    source_collection = source_client.get_collection(SOURCE_COLLECTION)
+
+    hosted_client = chromadb.PersistentClient(path=HOSTED_DB)
+
+    try:
+        collection = hosted_client.get_collection(HOSTED_COLLECTION)
+    except Exception:
+        collection = hosted_client.create_collection(HOSTED_COLLECTION)
+
+    existing = collection.count()
+
+    if existing == 0:
+        source_data = source_collection.get(
+            include=["documents", "metadatas"]
+        )
+
+        documents = source_data.get("documents") or []
+        metadatas = source_data.get("metadatas") or []
+
+        if not documents:
+            raise RuntimeError("No policy documents found in ChromaDB.")
+
+        batch_size = 100
+
+        for start in range(0, len(documents), batch_size):
+            batch_documents = documents[start:start + batch_size]
+            batch_metadatas = metadatas[start:start + batch_size]
+
+            response = client.embeddings.create(
+                model=EMBED_MODEL,
+                input=batch_documents,
+            )
+
+            embeddings = [
+                item.embedding
+                for item in response.data
+            ]
+
+            ids = [
+                f"policy-{start + i}"
+                for i in range(len(batch_documents))
+            ]
+
+            collection.add(
+                ids=ids,
+                documents=batch_documents,
+                metadatas=batch_metadatas,
+                embeddings=embeddings,
+            )
+
+    return collection
 
 
 def retrieve(question, user_role, n_results=8):
-    collection = get_collection()
+    collection = get_hosted_collection()
     allowed_level = ROLE_LEVEL[user_role]
 
     start = time.perf_counter()
 
-    embedding_response = ollama.embed(
+    response = client.embeddings.create(
         model=EMBED_MODEL,
         input=question,
     )
+
+    query_embedding = response.data[0].embedding
 
     embedding_time = time.perf_counter() - start
 
     start = time.perf_counter()
 
     results = collection.query(
-        query_embeddings=[embedding_response.embeddings[0]],
+        query_embeddings=[query_embedding],
         n_results=n_results,
     )
 
@@ -76,7 +140,9 @@ def retrieve(question, user_role, n_results=8):
 
 def generate_answer(question, user_role, authorized):
     if not authorized:
-        return "I don't have access to information that can answer that question.", 0
+        return (
+            "I don't have access to information that can answer that question."
+        ), 0
 
     context_parts = []
 
@@ -86,7 +152,6 @@ def generate_answer(question, user_role, authorized):
         source = metadata.get("source", "Unknown source")
         zone = metadata.get("zone", "Unknown zone")
         minimum_role = metadata.get("min_role", "Unknown role")
-        document = item["document"]
 
         context_parts.append(
             "[Source: "
@@ -96,7 +161,7 @@ def generate_answer(question, user_role, authorized):
             + " | Minimum role: "
             + minimum_role
             + "]\n"
-            + document
+            + item["document"]
         )
 
     context = "\n\n".join(context_parts)
@@ -120,23 +185,22 @@ def generate_answer(question, user_role, authorized):
 
     start = time.perf_counter()
 
-    response = ollama.chat(
+    response = client.responses.create(
         model=CHAT_MODEL,
-        messages=[
-            {
-                "role": "user",
-                "content": prompt,
-            }
-        ],
+        input=prompt,
     )
 
     generation_time = time.perf_counter() - start
 
-    return response.message.content, generation_time
+    return response.output_text, generation_time
 
 
-st.title("🔐 DunderMifflin Local Policy RAG")
-st.caption("Fully local RAG with role-based authorization")
+st.title("🔐 DunderMifflin Policy RAG")
+
+st.caption(
+    "Public demonstration | Hosted inference | "
+    "Role-based authorization before generation"
+)
 
 with st.sidebar:
     st.header("Access Control")
@@ -149,13 +213,14 @@ with st.sidebar:
     st.divider()
 
     st.markdown("### Architecture")
+
     st.markdown(
         """
-**Local only**
+**Hosted demonstration**
 
-- Ollama
-- llama3.2:3b
-- nomic-embed-text
+- Streamlit
+- OpenAI embeddings
+- OpenAI generation
 - ChromaDB
 - Section-level ACL
 """
@@ -164,16 +229,17 @@ with st.sidebar:
     st.divider()
 
     st.markdown("### Governance evaluation")
+
     st.metric("Local governance tests", "8/8")
+
     st.caption(
-        "Separate cloud MCP evaluation: 39/39. "
-        "These are separate test suites, not a direct benchmark comparison."
+        "The GitHub repository contains the fully local Ollama implementation."
     )
 
 
 question = st.text_area(
     "Ask a policy question",
-    placeholder="Example: What is the Executive compensation band in the Americas?",
+    placeholder="Example: What is the Associate travel budget in the Americas?",
     height=100,
 )
 
@@ -188,7 +254,7 @@ if ask:
         st.warning("Please enter a question.")
         st.stop()
 
-    with st.spinner("Retrieving authorized policy context..."):
+    with st.spinner("Retrieving policy context..."):
         (
             authorized,
             blocked,
@@ -196,7 +262,7 @@ if ask:
             retrieval_time,
         ) = retrieve(question, user_role)
 
-    with st.spinner("Generating answer locally..."):
+    with st.spinner("Generating answer..."):
         answer, generation_time = generate_answer(
             question,
             user_role,
@@ -231,6 +297,7 @@ if ask:
         with st.expander("🔒 Blocked chunks"):
             for item in blocked:
                 metadata = item["metadata"]
+
                 st.write(
                     "**"
                     + metadata.get("min_role", "Unknown role")
@@ -242,6 +309,7 @@ if ask:
         with st.expander("✅ Authorized chunks"):
             for item in authorized:
                 metadata = item["metadata"]
+
                 st.write(
                     "**"
                     + metadata.get("min_role", "Unknown role")
@@ -268,6 +336,6 @@ if ask:
         st.metric("Total", f"{total_time:.2f}s")
 
     st.caption(
-        "All embeddings, retrieval, authorization, and generation run locally "
-        "through Ollama and ChromaDB."
+        "Authorization is applied before policy context is sent to the "
+        "generation model."
     )

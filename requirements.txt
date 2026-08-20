@@ -2,3 +2,5 @@ chromadb
 ollama
 python-docx
 streamlit
+
+openai
