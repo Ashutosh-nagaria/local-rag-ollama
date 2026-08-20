@@ -1,637 +1,401 @@
-# Concepts: Local Enterprise Policy RAG
+Absolutely. Here is the **complete `CONCEPTS.md` file**. Copy everything inside the code block into `CONCEPTS.md`.
 
-## 1. What problem are we solving?
+markdown
+# Concepts
 
-This project is a private AI assistant for company policies.
+A plain-language explanation of the concepts behind the DunderMifflin Policy RAG system.
 
-Employees can ask questions such as:
+## 1. What is RAG?
 
-- What is my travel budget?
-- How much parental leave do I receive?
-- What is my compensation band?
-- What approval process applies to my role?
+RAG stands for Retrieval-Augmented Generation.
 
-The challenge is that finding information is not enough.
+Instead of asking a language model to answer entirely from what it learned during training, a RAG system first retrieves relevant information from a knowledge source and then gives that information to the model.
 
-The system must also determine whether the employee is allowed to receive that information.
+Simple version:
 
-The core product problem is therefore:
+Question
+   |
+   v
+Find relevant information
+   |
+   v
+Give information to model
+   |
+   v
+Generate answer
 
-Find the right information, while preventing users from receiving information they are not authorized to see.
+This is useful for enterprise policies because the answer should come from the organization's documents rather than from general model knowledge.
 
-## 2. What is RAG?
+## 2. Why use RAG?
 
-RAG means Retrieval-Augmented Generation.
+A language model may know general information, but it does not automatically know the contents of a company's internal documents.
 
-In simple terms, instead of asking an AI model to answer only from its training knowledge, we first search our own company documents and give the relevant information to the model.
+RAG gives the model access to a controlled knowledge source at query time.
 
-Think of an open-book exam.
+For this project, the knowledge source is a collection of DunderMifflin policy documents.
 
-Without RAG, the student answers from memory.
+## 3. What is chunking?
 
-With RAG, the student receives the relevant pages of the company policy manual before answering.
+Large documents are divided into smaller pieces called chunks.
 
-The basic flow is:
+For this project, policy content is divided into approximately 500-character chunks.
 
-Question -> Retrieve relevant information -> Give context to LLM -> Generate answer
+Instead of searching an entire document, the system searches these smaller pieces.
 
-## 3. Why not give every document to the LLM?
-
-There are two problems.
-
-First, there may be too much information.
-
-Second, some information may be restricted.
-
-An Associate should not automatically receive Executive compensation information simply because the search system found it.
-
-Therefore we need both retrieval and authorization.
+This improves retrieval because the system can identify the specific part of a policy that is relevant to the question.
 
 ## 4. What is an embedding?
 
-An embedding is a numerical representation of the meaning of text.
-
-For example, these questions have different words but similar meaning:
-
-How much can I spend on business travel?
-
-What is my annual travel budget?
-
-An embedding model converts both into numerical vectors. Similar meanings produce vectors that are closer together.
-
-The simple mental model is:
-
-Embedding = meaning represented as numbers.
-
-## 5. What is nomic-embed-text?
-
-nomic-embed-text is the embedding model used in this project.
-
-Its job is not to answer questions.
-
-Its job is to convert text into vectors.
-
-During ingestion:
-
-Policy text -> nomic-embed-text -> vector
-
-During a query:
-
-User question -> nomic-embed-text -> question vector
-
-The system then compares the question vector with stored policy vectors to find relevant chunks.
-
-The model runs locally through Ollama.
-
-## 6. What is a vector database?
-
-Once text has been converted into vectors, we need somewhere to store them.
-
-That is the role of a vector database.
-
-A traditional database can answer questions such as:
-
-Find documents where country equals Americas.
-
-A vector database can answer:
-
-Find information whose meaning is similar to this question.
-
-That is why vector databases are useful for RAG.
-
-## 7. Why ChromaDB?
-
-ChromaDB is the local vector database used by this project.
-
-It stores:
-
-- Policy chunks
-- Embeddings
-- Source information
-- Geographic zone
-- Minimum required role
-- Minimum role level
-
-The database runs locally.
-
-This means the demonstration does not need a cloud vector database.
-
-## 8. What is chunking?
-
-A large policy document is not stored as one giant block.
-
-It is split into smaller pieces called chunks.
-
-The project uses a target chunk size of approximately 500 characters.
-
-The reason is simple.
-
-If a 20-page policy is stored as one giant object, a question about travel reimbursement could retrieve the entire policy.
-
-Smaller chunks allow the system to retrieve more focused information.
-
-There is a trade-off.
-
-Chunks that are too small can lose context.
-
-Chunks that are too large can reduce retrieval precision.
-
-The 500-character value is therefore a practical portfolio choice, not a universal optimum.
-
-## 9. The important governance bug
-
-This was one of the most valuable discoveries in the project.
-
-The source policy documents contained document-level minimum-role metadata.
+An embedding is a numerical representation of text.
 
 For example:
 
-Min-Role = Associate
+"What is the travel budget?"
 
-The problem was that one document could contain multiple role sections:
+is converted into a vector containing many numbers.
 
-Associate
-Senior
-Executive
+The vector represents aspects of the meaning of the text.
 
-A document-level permission was therefore too coarse.
+Another sentence with similar meaning should produce a vector that is relatively close to it.
 
-An Associate-labelled document could contain an Executive-only section.
+This allows semantic search.
 
-That creates a potential security leak.
+## 5. What is semantic search?
 
-The problem was not the LLM.
+Traditional keyword search looks for matching words.
 
-The problem was authorization granularity.
+Semantic search looks for similar meaning.
 
-## 10. How we fixed the bug
+For example:
 
-The ingestion pipeline was changed so that role information is detected at the section level.
+Question:
 
-Each section gets its own required role.
+"How much can an Associate spend on business travel?"
 
-Each chunk then inherits the role of the section it came from.
+Policy:
 
-Conceptually:
+"Associates receive an annual travel allowance of $8,000."
 
-Associate section -> Associate chunks
+The wording is different, but the meaning is related.
 
-Senior section -> Senior chunks
+Embeddings allow the system to identify this relationship.
 
-Executive section -> Executive chunks
+## 6. What is ChromaDB?
 
-This makes the authorization boundary match the actual content boundary.
+ChromaDB is the vector database used by this project.
 
-That is much safer than treating the entire document as having one permission level.
+It stores:
 
-## 11. Role hierarchy
+Policy chunk
++
+Embedding
++
+Metadata
 
-The project uses three roles:
+The metadata includes authorization information such as:
+
+Source
+Region
+Minimum role
+Role level
+
+When a user asks a question, the question is converted into an embedding and ChromaDB finds the most similar stored policy chunks.
+
+## 7. What is Ollama?
+
+Ollama is the local runtime used to run AI models.
+
+It allows the application to run models directly on the local machine instead of sending model inference requests to a hosted model provider.
+
+In this project, Ollama runs two different models.
+
+## 8. What is nomic-embed-text?
+
+nomic-embed-text is the embedding model used by the local implementation.
+
+Its job is to convert text into vectors.
+
+It is used for both:
+
+1. Policy documents during ingestion.
+2. User questions during retrieval.
+
+The same embedding space allows the question vector to be compared with the policy vectors stored in ChromaDB.
+
+It does not generate the final answer.
+
+## 9. What is llama3.2:3b?
+
+llama3.2:3b is the language model used for generation in the local implementation.
+
+After retrieval and authorization, it receives:
+
+User question
++
+Authorized policy context
+
+It then generates the final response.
+
+## 10. Why are there two models?
+
+The two models have different jobs.
+
+nomic-embed-text
+
+    |
+    v
+
+Understand text as vectors
+
+    |
+    v
+
+Semantic retrieval
+
+while:
+
+llama3.2:3b
+
+    |
+    v
+
+Read authorized context
+
+    |
+    v
+
+Generate answer
+
+Ollama provides the local runtime for both.
+
+## 11. What is authorization?
+
+Authorization determines what an already-identified user is allowed to access.
+
+This project uses three roles:
 
 Associate = 1
-
 Senior = 2
-
 Executive = 3
 
-The authorization rule is:
+Each policy chunk has a minimum required role.
 
-User role level >= required role level
+The application compares:
 
-Examples:
+User role level
+        vs.
+Chunk minimum role level
 
-Associate user = 1
-Associate content = 1
-1 >= 1
-Allowed.
+If:
 
-Associate user = 1
-Executive content = 3
-1 >= 3
-Blocked.
+chunk level <= user level
 
-Executive user = 3
-Associate content = 1
-3 >= 1
-Allowed.
+the chunk is authorized.
 
-This is a simple role-based access-control model.
+Otherwise it is blocked.
 
-## 12. Why authorization happens before the LLM
+## 12. Why section-level authorization?
 
-This is the most important architectural decision.
+A single policy document can contain multiple role sections.
 
-A weak design would be:
+For example:
 
-Retrieve everything -> Give everything to LLM -> Tell LLM not to reveal restricted information.
+Associate section
+Senior section
+Executive section
 
-That is risky because the LLM has already received the sensitive information.
+A document-level permission cannot accurately represent those boundaries.
 
-This project instead does:
+If the entire document were marked Executive-only, Associates could not access legitimate Associate information.
 
-Retrieve candidates -> Authorization filter -> Remove unauthorized chunks -> Build authorized context -> LLM
+If the entire document were marked Associate-accessible, restricted Executive information could potentially become visible.
 
-The blocked information never reaches the generation model.
+The ingestion pipeline therefore identifies role section headers and assigns the appropriate authorization metadata to each chunk.
 
-This makes the authorization boundary deterministic and easier to test.
+## 13. Why authorization happens before generation
 
-## 13. ELI5 security analogy
+This is the central security principle of the project.
 
-Imagine a library.
+A weak design might retrieve everything and then tell the language model:
 
-The search system is the librarian.
+"Do not reveal anything the user isn't allowed to see."
 
-The LLM is the reader.
+That makes the model part of the security boundary.
 
-The librarian finds five books that might answer the question.
+This project uses a stronger design:
 
-The employee's access badge says they can only read three.
+Retrieve
+   |
+   v
+Authorize
+   |
+   +---- Block restricted chunks
+   |
+   v
+Authorized context
+   |
+   v
+Generate
 
-The librarian removes the two restricted books before giving the books to the reader.
+The model never receives the blocked policy content.
 
-The reader never sees the restricted books.
+This makes authorization a deterministic application-level control rather than a prompting instruction.
 
-That is what the authorization filter does.
+## 14. What happens during ingestion?
 
-## 14. What is Ollama?
+The ingestion pipeline works approximately like this:
 
-Ollama is the local runtime used to run the AI models.
+DOCX policy
+    |
+    v
+Read paragraphs
+    |
+    v
+Identify role sections
+    |
+    v
+Split into chunks
+    |
+    v
+Generate embeddings
+    |
+    v
+Store in ChromaDB
 
-Instead of sending model requests to a hosted API, the application communicates with Ollama running on the local computer.
+Each chunk receives metadata describing its authorization requirements.
 
-Cloud:
+## 15. What happens when a user asks a question?
 
-Application -> Internet -> Hosted LLM
+The runtime flow is:
 
-Local:
+User question
+      |
+      v
+Create question embedding
+      |
+      v
+ChromaDB semantic search
+      |
+      v
+Retrieve relevant chunks
+      |
+      v
+Check role authorization
+      |
+      +---- Block unauthorized chunks
+      |
+      v
+Authorized policy context
+      |
+      v
+Language model
+      |
+      v
+Answer
 
-Application -> Ollama -> Local model
+## 16. Local versus hosted deployment
 
-This is useful when privacy, offline operation, or on-prem deployment is important.
+The repository's local implementation uses:
 
-## 15. What is llama3.2:3b?
+Ollama
+├── nomic-embed-text
+└── llama3.2:3b
 
-llama3.2:3b is the generation model used in this project.
+ChromaDB
++
+Python authorization logic
 
-The 3B means approximately three billion parameters.
+The public Streamlit demonstration uses:
 
-It is intentionally small enough to run on the local machine used for this demonstration.
+OpenAI embeddings
++
+ChromaDB
++
+Python authorization logic
++
+OpenAI generation
 
-The trade-off is:
+The hosted demonstration uses OpenAI because Streamlit Community Cloud does not provide the local Ollama runtime used by the fully local implementation.
 
-Smaller local model means lower hardware requirements and local privacy, but generally weaker reasoning and generation quality than larger models.
+The underlying architectural principle remains the same:
 
-The project is not claiming the small local model is universally better.
+Retrieve
+   |
+Authorize
+   |
+Generate
 
-It demonstrates a different deployment choice.
+## 17. Why not let the language model handle authorization?
 
-## 16. What is context length?
+Language models are probabilistic systems.
 
-Context length is approximately how much text the model can consider in one interaction.
+Authorization should be deterministic.
 
-The installed llama3.2:3b model reports a maximum context length of 131,072 tokens.
+A security decision should not depend on whether a model correctly follows an instruction such as:
 
-However, ollama ps showed a current runtime context allocation of 4,096 tokens on this machine.
+"Do not reveal Executive information."
 
-This distinction matters.
+Instead, the application removes unauthorized information before the model receives it.
 
-Maximum model capability does not automatically mean that the local computer will practically run the model at that context size.
+That creates a clearer security boundary.
 
-Larger context generally requires more memory.
+## 18. What does the evaluation test?
 
-## 17. What does ollama ps do?
+The local evaluation contains 8 governance scenarios.
 
-The command:
+The tests verify both:
 
-ollama ps
+- Information that the user should be able to access.
+- Information that the user should not be able to access.
 
-shows models currently loaded by Ollama.
-
-It can show:
-
-- Model name
-- Model identifier
-- Memory usage
-- Processor usage
-- Context allocation
-- How long the model will remain loaded
-
-In our testing, llama3.2:3b and nomic-embed-text were running on the GPU.
-
-## 18. What happens during ingestion?
-
-The ingestion pipeline prepares the policy corpus.
-
-The simplified flow is:
-
-DOCX files -> Read text -> Identify roles and regions -> Detect role sections -> Split into chunks -> Create embeddings -> Store chunks, embeddings, and authorization metadata -> ChromaDB
-
-The result is a searchable local policy index.
-
-## 19. What happens during a query?
-
-The query pipeline is:
-
-User role + question
-
--> Embed question
-
--> Search ChromaDB
-
--> Retrieve candidate chunks
-
--> Apply role authorization
-
--> Remove unauthorized chunks
-
--> Build authorized context
-
--> Send context to llama3.2:3b
-
--> Generate answer
-
-Retrieval and authorization are separate operations.
-
-Retrieval asks:
-
-What information looks relevant?
-
-Authorization asks:
-
-Is this user allowed to receive it?
-
-Those are different questions.
-
-## 20. Why can retrieval return unauthorized information?
-
-Semantic similarity does not understand business permissions.
-
-Suppose an Associate asks:
-
-What is the compensation band?
-
-The search system may find:
-
-- Associate compensation
-- Senior compensation
-- Executive compensation
-
-All three can be semantically relevant.
-
-The vector database is doing its job.
-
-It is finding similar information.
-
-It is not responsible for deciding whether the user is authorized.
-
-That is why authorization happens after retrieval.
-
-## 21. Evaluation
-
-The local project has eight governance test cases.
-
-Current result:
+The current result is:
 
 8/8 passed
 
-The tests cover both positive and negative authorization scenarios.
+The important part of the denial tests is that restricted chunks are blocked before generation.
 
-Positive tests verify that authorized target chunks are allowed.
+## 19. What does this project demonstrate?
 
-Negative tests verify that restricted target chunks are blocked before reaching the LLM.
+The project demonstrates several ideas working together:
 
-Examples include:
-
-L04 | Associate | target chunk blocked before LLM
-
-L05 | Senior | target chunk blocked before LLM
-
-L06 | Associate | target chunk blocked before LLM
-
-This is stronger than simply checking whether the final answer looks safe.
-
-The evaluation checks the actual security boundary.
-
-## 22. Performance
-
-The application measures:
-
-Embedding time
-Retrieval time
-Generation time
-Total time
-
-Example:
-
-Embedding: 0.08 seconds
-
-Retrieval: 0.01 seconds
-
-Generation: 1.43 seconds
-
-Total: 1.55 seconds
-
-Generation is normally the largest component because the LLM generates the answer token by token.
-
-Local vector retrieval is comparatively fast for this corpus.
-
-## 23. Why local can be attractive
-
-A local architecture can provide:
-
-- Strong control over data location
-- No hosted LLM API required for core inference
-- No cloud inference charge for local generation
-- Offline operation
-- Local model control
-- A path toward on-prem deployment
-
-But these benefits come with operational trade-offs.
-
-## 24. Local trade-offs
-
-Local AI also means owning the infrastructure.
-
-Potential disadvantages include:
-
-- Hardware limitations
-- Memory constraints
-- Slower inference for larger models
-- Model management
-- Updates and maintenance
-- Smaller models may produce weaker answers
-- More operational responsibility
-
-Therefore:
-
-Local is not automatically better.
-
-Cloud is not automatically better.
-
-The correct architecture depends on product requirements.
-
-## 25. Cloud versus local product decision
-
-Cloud infrastructure can be attractive when a team wants managed infrastructure, easier scaling, and access to powerful hosted models.
-
-Local infrastructure can be attractive when data control, privacy, offline operation, or on-prem requirements are more important.
-
-A PM should ask:
-
-- What data can leave the environment?
-- What latency is acceptable?
-- What model quality is required?
-- What hardware exists?
-- What compliance requirements exist?
-- What operating cost is acceptable?
-- How much infrastructure can the team operate?
-
-These requirements should drive the architecture.
-
-## 26. What would production require?
-
-This project is a portfolio-scale demonstration.
-
-A production implementation would need additional controls such as:
-
-- Enterprise authentication
-- Identity provider integration
-- Central authorization policy management
-- Audit logging
-- Encryption
-- Document versioning
-- Policy lifecycle management
-- Monitoring
-- Security testing
-- Production-grade model serving
-
-The simple role selection used in this demonstration would be replaced by a trusted identity and authorization system.
-
-## 27. What would I improve next?
-
-If this became a real product, I would prioritize:
-
-1. Real enterprise identity integration.
-2. Centralized authorization policies.
-3. Audit logs for retrieval and authorization decisions.
-4. Better document versioning.
-5. More comprehensive evaluation.
-6. Stronger models where hardware permits.
-7. Retrieval quality evaluation separate from generation quality.
-8. Security testing for prompt injection and indirect data leakage.
-9. Production observability.
-10. A larger benchmark comparing local and cloud quality, latency, cost, and privacy.
-
-## 28. What is actually interesting about the project?
-
-The individual technologies are not novel.
-
-RAG exists.
-
-Ollama exists.
-
-ChromaDB exists.
-
-Role-based access control exists.
-
-The interesting product and engineering insight is how they are combined.
-
-The project demonstrates:
-
+RAG
++
 Semantic retrieval
 +
-Explicit authorization
+Vector database
 +
-Local inference
+Local model inference
 +
-Measured performance
+Role-based authorization
++
+Section-level access control
++
+Governance evaluation
 
-The key lesson is that enterprise AI governance should be implemented as a system-level control, not just as a prompt instruction.
+The central lesson is:
 
-## 29. How to explain it to a non-technical person
+> A useful enterprise AI system needs both retrieval and authorization.
 
-I built a private AI assistant for company policies.
+Finding the right information is not enough.
 
-It searches company documents and answers questions locally.
+The system must also determine whether the current user is allowed to receive that information.
 
-Before giving information to the AI, it checks the employee's role.
+## 20. Production considerations
 
-So an Associate can receive Associate information, while Executive-only information is filtered out before the AI ever sees it.
+This project is a demonstration rather than a production authorization platform.
 
-## 30. How to explain it to a technical person
+A production system would need additional capabilities such as:
 
-I built a local RAG pipeline using section-level role metadata, ChromaDB for vector retrieval, nomic-embed-text for embeddings, and llama3.2:3b through Ollama for generation.
+- Identity integration
+- Authentication
+- Centralized authorization policies
+- Audit logs
+- Encryption
+- Document lifecycle management
+- Monitoring
+- Evaluation at larger scale
+- Model and dependency management
+- Secret management
+- Operational controls
 
-The retrieval stage returns candidates.
-
-A role-level authorization filter then removes unauthorized chunks before the authorized context is passed to the LLM.
-
-## 31. How to explain it to an Engineering Manager
-
-The key architectural decision was separating semantic retrieval from authorization.
-
-Retrieval determines relevance.
-
-An explicit ACL layer determines whether a retrieved chunk can enter the generation context.
-
-We discovered that document-level scope was too coarse because documents contained multiple role sections.
-
-We therefore moved authorization metadata to the section and chunk level.
-
-We then validated the security boundary with eight automated authorization scenarios, all of which passed.
-
-## 32. How to explain it as a PM
-
-The strongest PM story is not:
-
-I built a chatbot.
-
-The stronger story is:
-
-I identified a governance problem in enterprise RAG, reproduced the architecture in a fully local environment, found a real authorization granularity bug, redesigned the permission boundary at the content level, and measured the resulting system across authorization correctness and local performance.
-
-That demonstrates:
-
-- Problem framing
-- Risk identification
-- Architecture decisions
-- Trade-off analysis
-- Iterative debugging
-- Evaluation
-- Product thinking
-
-## 33. Final mental model
-
-Remember three questions.
-
-RAG asks:
-
-What information is relevant?
-
-Authorization asks:
-
-What information is this user allowed to receive?
-
-The LLM asks:
-
-How should I explain the authorized information?
-
-Those responsibilities should not be confused.
-
-The core architecture is:
-
-Question
-|
-v
-Relevance
-|
-v
-Authorization
-|
-v
-Generation
-|
-v
-Answer
-
-That separation is the central design principle of this project.
+The purpose of this project is to demonstrate the core architectural principle clearly and reproducibly.
