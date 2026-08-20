@@ -2,7 +2,7 @@ Absolutely. Here is the **entire final `README.md` in one single block**, with n
 
 Copy everything inside this block and replace your existing `README.md`:
 
-````markdown
+
 # DunderMifflin Local Policy RAG
 
 A governance-aware Retrieval-Augmented Generation (RAG) system for enterprise policy questions.
@@ -43,7 +43,7 @@ The core principle is:
 
 ## Architecture
 
-```text
+
                     POLICY DOCUMENTS
                            |
                            v
@@ -78,7 +78,7 @@ The core principle is:
                   |
                   v
                 Answer
-````
+
 
 Authorization happens **after retrieval but before generation**.
 
