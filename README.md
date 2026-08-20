@@ -1,207 +1,280 @@
 # Local Enterprise Policy RAG
 
-A fully local, governance-aware RAG system for enterprise policy questions.
+A fully local RAG system for enterprise policy retrieval with role-based access control.
 
-It uses Ollama, llama3.2:3b, nomic-embed-text, ChromaDB, Python, and Streamlit. Policy content stays on the local machine.
+The system retrieves relevant policy content, applies authorization at the section and chunk level, and sends only authorized context to a local language model.
 
 ## Why this project exists
 
-A normal RAG system can retrieve relevant information but still create a security problem if the retrieved information belongs to a higher-privilege user.
+Enterprise RAG has two separate problems:
 
-This project treats authorization as part of the retrieval pipeline. Unauthorized policy chunks are removed before they reach the LLM.
+1. Find information relevant to the question.
+2. Make sure the user is allowed to receive that information.
+
+This project keeps those responsibilities separate.
+
+> Retrieval determines relevance. Authorization determines access. The LLM generates the response.
 
 ## Architecture
 
-Policy documents -> ingestion -> role tagging -> embeddings -> ChromaDB -> semantic retrieval -> role-based authorization -> authorized context -> local LLM -> answer.
+```text
+Policy Documents
+       |
+       v
+    Ingestion
+       |
+       v
+Section-level Role Metadata
+       |
+       v
+   Embeddings
+       |
+       v
+    ChromaDB
+       |
+       v
+Semantic Retrieval
+       |
+       v
+Role-based Authorization
+       |
+       +----------> Unauthorized content blocked
+       |
+       v
+Authorized Context
+       |
+       v
+     Ollama
+       |
+       v
+  llama3.2:3b
+       |
+       v
+     Answer
+````
 
-## Key security idea
+## Security model
 
 Authorization happens after retrieval but before generation.
 
 1. Retrieve potentially relevant policy chunks.
 2. Read the minimum role required by each chunk.
-3. Compare it with the user role.
+3. Compare it with the user's role.
 4. Remove unauthorized chunks.
 5. Send only authorized context to the LLM.
 6. Generate the answer.
 
-The system does not rely on the LLM to decide what the user is allowed to see. Sensitive information is removed before the LLM receives it.
+The LLM is not responsible for deciding whether a user is authorized.
 
-## ELI5
+This matters because a single policy document can contain multiple privilege levels. Document-level permissions can therefore be too coarse.
 
-Imagine three filing cabinets: Associate, Senior, and Executive.
-
-An employee asks for Executive compensation information. The search system may find the Executive document, but a security guard checks the employee role before allowing the document through.
-
-If the employee is not authorized, the document is blocked and never reaches the AI.
-
-## The governance bug we found
-
-The source DOCX files contained document-level Min-Role metadata, but a single document could contain Associate, Senior, and Executive sections.
-
-A document-level permission was therefore too coarse.
-
-The ingestion pipeline was rebuilt to detect role section headers and assign role metadata to each chunk. This makes the authorization boundary match the actual policy content boundary.
+This project assigns authorization metadata at the section and chunk level so that the security boundary follows the actual policy content.
 
 ## Role hierarchy
 
-Associate = 1
-Senior = 2
-Executive = 3
+The demonstration uses three roles:
 
-A chunk is authorized when its minimum required role level is less than or equal to the user's role level.
+| Role      | Level |
+| --------- | ----: |
+| Associate |     1 |
+| Senior    |     2 |
+| Executive |     3 |
 
-## Models
+A chunk is authorized when:
 
-### nomic-embed-text
+```text
+user role level >= chunk required role level
+```
 
-The local embedding model. It converts policy text and user questions into numerical representations so semantically similar content can be retrieved.
+For example:
 
-It does not generate the final answer.
+```text
+Associate user + Associate content = Allowed
+Associate user + Executive content = Blocked
+Executive user + Associate content = Allowed
+```
 
-### llama3.2:3b
+## Technology
 
-The local generation model. It receives the question and authorized policy context and generates the final answer.
-
-### Ollama
-
-The local model runtime that runs both models without requiring a hosted LLM API for the core pipeline.
-
-## ChromaDB
-
-ChromaDB is the local vector database. It stores policy chunks, embeddings, and metadata such as source, zone, minimum role, and minimum role level.
+| Technology       | Purpose                                                      |
+| ---------------- | ------------------------------------------------------------ |
+| Python           | Application, ingestion, retrieval, authorization, evaluation |
+| Ollama           | Local model runtime                                          |
+| llama3.2:3b      | Local answer generation                                      |
+| nomic-embed-text | Local embeddings                                             |
+| ChromaDB         | Local vector database                                        |
+| Streamlit        | Local web interface                                          |
+| python-docx      | DOCX document processing                                     |
 
 ## Evaluation
 
-The local governance evaluation currently passes all 8 scenarios.
+The local governance evaluation contains eight scenarios covering authorized and unauthorized retrieval.
 
-Result:
+**Result: 8/8 passed**
 
-8/8 passed
-
-The tests cover both authorized retrieval and unauthorized retrieval. In denial cases, the target restricted chunk is explicitly verified to be blocked before the LLM.
-
-The earlier cloud MCP implementation has a separate evaluation suite with 39/39 tests passing. These are separate suites and should not be treated as a direct benchmark comparison.
-
-## Example
-
-An Associate asking for the Associate compensation band in the Americas receives:
-
-5,000 - 5,000 base annually.
-
-An Executive asking for the Executive compensation band in the Americas can receive:
-
-80,000 - 50,000 base annually, plus bonus and equity per grade.
-
-An Associate asking for the Executive compensation band has the Executive chunk blocked before it reaches the LLM.
+The denial scenarios verify that restricted chunks are blocked before they reach the language model.
 
 ## Performance
 
-Five repeated local runs produced:
+The application measures:
 
-4.71s
-1.59s
-1.25s
-1.55s
-1.64s
+* Embedding time
+* Retrieval time
+* Generation time
+* Total latency
 
-Warm median: 1.59 seconds.
+Generation is generally the largest component of latency because the language model generates the response sequentially.
 
-Generation is generally the largest contributor to latency. Embedding and ChromaDB retrieval are comparatively fast.
-
-## Context window finding
-
-The installed llama3.2:3b model reports a maximum context length of 131,072 tokens.
-
-However, ollama ps showed a current runtime context allocation of 4,096 tokens on this machine.
-
-This demonstrates an important local AI distinction: model capability and practical runtime configuration are not always the same thing.
-
-## Cloud versus local
-
-| Dimension | Cloud MCP | Local RAG |
-|---|---|---|
-| Data location | Cloud/server | Local machine |
-| Generation | Hosted model | Ollama |
-| Retrieval | Policy lookup | Vector retrieval |
-| Embeddings | Service dependent | Local |
-| Vector store | Cloud architecture | ChromaDB |
-| Authorization | Before policy response | Before LLM context |
-| External API dependency | Yes | No for core inference |
-| Main trade-off | Managed infrastructure | Local hardware constraints |
-
-Local is not universally better. It provides stronger control over data location and external dependencies, while requiring local hardware and model serving.
+Actual performance depends on local hardware, model size, context configuration, corpus size, and runtime configuration.
 
 ## Project structure
 
+```text
 local-rag-ollama/
-- app.py
-- ingest.py
-- query.py
-- eval_local.py
-- requirements.txt
-- README.md
-- CONCEPTS.md
-- .gitignore
-- docs/
+├── app.py
+├── ingest.py
+├── query.py
+├── eval_local.py
+├── requirements.txt
+├── README.md
+├── CONCEPTS.md
+├── .gitignore
+└── docs/
+```
 
-chroma_db and venv are generated locally and excluded from Git.
+The `docs/` directory contains the synthetic policy documents used by the demonstration.
 
-## Setup
+Generated runtime artifacts such as `venv/` and `chroma_db/` are excluded from Git.
 
-### Pull models
+## Run locally
 
+### Requirements
+
+You will need:
+
+* Python 3
+* Git
+* Ollama
+* Sufficient local hardware to run the selected models
+
+### Clone the repository
+
+```bash
+git clone https://github.com/Ashutosh-nagaria/local-rag-ollama.git
+cd local-rag-ollama
+```
+
+You can also download the repository as a ZIP from GitHub.
+
+### Install the Ollama models
+
+Install Ollama, then run:
+
+```bash
 ollama pull llama3.2:3b
 ollama pull nomic-embed-text
+```
+
+### Create a Python environment
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
 
 ### Install dependencies
 
-python3 -m venv venv
-source venv/bin/activate
+```bash
 pip install -r requirements.txt
+```
 
-### Ingest policies
+### Build the local policy index
 
+```bash
 python3 ingest.py
+```
 
-### Run CLI
+### Run the governance evaluation
 
-python3 query.py
-
-### Run governance evaluation
-
+```bash
 python3 eval_local.py
+```
 
 Expected result:
 
-8/8 passed
+```text
+=== Results: 8/8 passed ===
+```
 
-### Run Streamlit
+### Run the command-line interface
 
+```bash
+python3 query.py
+```
+
+### Run the Streamlit interface
+
+```bash
 streamlit run app.py
+```
 
-## Limitations
+The terminal will provide a local URL, normally:
 
-This is a portfolio-scale demonstration, not a production enterprise authorization platform.
+```text
+http://localhost:8501
+```
 
-Production deployment would additionally require identity integration, centralized authentication, stronger authorization policy management, audit logging, encryption, document versioning, monitoring, larger evaluation suites, and production-grade model serving.
+## Documentation
 
-## Product lesson
+See [CONCEPTS.md](CONCEPTS.md) for detailed explanations of:
 
-The interesting part of this project is not the chatbot. It is the architecture.
+* RAG
+* Embeddings
+* Vector retrieval
+* Chunking
+* Section-level authorization
+* Role hierarchies
+* Ollama
+* Context length
+* Ingestion
+* Query processing
+* Evaluation
+* Local deployment trade-offs
+* Production considerations
 
-Authorization is enforced as a deterministic system-level control before sensitive information reaches the model.
+## Data and privacy
 
-This demonstrates how enterprise RAG can combine semantic retrieval with explicit governance rather than relying on prompting alone.
+The repository contains synthetic demonstration policy documents.
 
-## Interview summary
+The core inference pipeline is designed to run locally.
 
-I built a fully local, governance-aware RAG system to explore what changes when enterprise policy retrieval moves from cloud infrastructure to an on-prem style architecture.
+Do not replace the demonstration corpus with confidential enterprise information unless the environment is appropriately secured and controlled.
 
-I used local embeddings, ChromaDB, Ollama, and a small Llama model.
+## Production considerations
 
-The key design decision was enforcing role-based authorization before retrieved policy chunks reached the LLM.
+This repository demonstrates the architecture at portfolio scale.
 
-I found and fixed a real bug where document-level permissions could expose restricted sections, so I moved authorization metadata to the section and chunk level.
+A production implementation would additionally require:
 
-The final local system passed 8 out of 8 governance scenarios and achieved a 1.59 second warm median latency on an 8 GB Apple Silicon Mac.
+* Trusted enterprise identity
+* Identity provider integration
+* Centralized authorization policy management
+* Audit logging
+* Encryption
+* Document versioning
+* Policy lifecycle management
+* Monitoring and observability
+* Security testing
+* Prompt injection testing
+* Data leakage testing
+* Production-grade model serving
+
+The role selector in the Streamlit application is a demonstration of authorization logic. It is not a production authentication mechanism.
+
+## License
+
+No open-source license is currently specified. The repository is published as a technical portfolio demonstration.
+
+## Built by
+
+**Ashutosh Nagaria**
