@@ -485,11 +485,5 @@ The language model should not be the security boundary.
 
 The application should determine what context the model is allowed to receive.
 
-## Built by Ashutosh
-
 A practical exploration of local AI, enterprise RAG, and governance-aware system design.
-
-```
-
-**That's the full file. Nothing else needs to be added to it.**
-```
+## Built by Ashutosh :)
